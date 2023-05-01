@@ -1,0 +1,167 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  MICRO NOTIFICATION SERVICE
+
+  Serverless microservice that manages user notification (PUSH,SMS)
+
+Globals:
+  Function:
+    Timeout: 20
+    Runtime: java11
+    Architectures:
+      - arm64
+    MemorySize: 512
+    Environment:
+      Variables:
+        JAVA_TOOL_OPTIONS:  -XX:+TieredCompilation -XX:TieredStopAtLevel=1
+
+Resources:
+
+  #API Gateway created using SAM simple declaration
+  NotificationServiceAPIGateway:
+    Type: AWS::Serverless::Api
+    Properties:
+      StageName: dev
+      Name: notification-service
+
+  #Lambda function
+  PairLambda:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: it.loooop.Pair::handleRequest
+      CodeUri: .
+      Environment:
+        Variables:
+          DYNAMODB_DEVICES_TABLE: !Ref DevicesTable
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref DevicesTable
+      Events:
+        ApiEvents:
+          Type: Api
+          Properties:
+            Path: /pair
+            Method: POST
+            RestApiId: !Ref NotificationServiceAPIGateway
+
+  SendLambda:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: it.loooop.Send::handleRequest
+      CodeUri: .
+      Environment:
+        Variables:
+          DYNAMODB_DEVICES_TABLE: !Ref DevicesTable
+          DYNAMODB_NOTIFICATIONS_TABLE: !Ref NotificationsTable
+          DYNAMODB_APPS_TABLE: !Ref AppsTable
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref DevicesTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref NotificationsTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref AppsTable
+        - Statement:
+            - Effect: Allow
+              Action:
+                - 'sns:*'
+              Resource:
+                - '*'
+      Events:
+        ApiEvents:
+          Type: Api
+          Properties:
+            Path: /send
+            Method: POST
+            RestApiId: !Ref NotificationServiceAPIGateway
+
+  ListLambda:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: it.loooop.List::handleRequest
+      CodeUri: .
+      Environment:
+        Variables:
+          DYNAMODB_NOTIFICATIONS_TABLE: !Ref NotificationsTable
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref NotificationsTable
+      Events:
+        ApiEvents:
+          Type: Api
+          Properties:
+            Path: /list
+            Method: POST
+            RestApiId: !Ref NotificationServiceAPIGateway
+
+  ReadLambda:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: it.loooop.Read::handleRequest
+      CodeUri: .
+      Environment:
+        Variables:
+          DYNAMODB_NOTIFICATIONS_TABLE: !Ref NotificationsTable
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref NotificationsTable
+      Events:
+        ApiEvents:
+          Type: Api
+          Properties:
+            Path: /read
+            Method: POST
+            RestApiId: !Ref NotificationServiceAPIGateway
+
+  #DynamoDB table created using SAM simple declaration
+  #Table with customer devices and Firebase tokens
+  DevicesTable:
+    Type: AWS::Serverless::SimpleTable
+    Properties:
+      TableName: Devices
+      PrimaryKey:
+        Name: deviceId
+        Type: String
+
+  #Table with App information and configuration for SNS
+  AppsTable:
+    Type: AWS::Serverless::SimpleTable
+    Properties:
+      TableName: Apps
+      PrimaryKey:
+        Name: appId
+        Type: String
+
+  #Standard CloudFormation DynamoDb table definition because SimpleTable doesn't support orderKey
+  #Table with the notifications sent to customers
+  NotificationsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: Notifications
+      AttributeDefinitions:
+        #CompositeKey
+        - AttributeName: notificationId
+          AttributeType: S
+        - AttributeName: insertTimestamp
+          AttributeType: S
+        #- AttributeName: readTimestamp
+        #  AttributeType: S
+        #- AttributeName: message
+        #  AttributeType: S
+        #- AttributeName: device
+        #  AttributeType: S
+
+      KeySchema:
+        - AttributeName: notificationId
+          KeyType: HASH
+        - AttributeName: insertTimestamp
+          KeyType: RANGE
+
+      BillingMode: PAY_PER_REQUEST
+
+Outputs:
+  NotificationServiceAPIGatewayEndpoint:
+    Description: NotificationServiceAPIGateway Endpoint
+    Value:
+      Fn::Sub: https://${NotificationServiceAPIGateway}.execute-api.${AWS::Region}.amazonaws.com/dev
